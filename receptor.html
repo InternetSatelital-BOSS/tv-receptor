@@ -6,7 +6,6 @@
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
     <style>
         body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
-        
         cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); }
         
         #overlay-inactividad {
@@ -37,6 +36,7 @@
             { nombre: "Las Estrellas", url: "https://tv.vpnsolucionesboss.online/hls/Las_Estrellas/playlist.m3u8" }
         ];
         let canalActual = 0;
+        let bloqueandoDobleClic = false;
 
         // --- LÓGICA DE INACTIVIDAD (30s + 15s) ---
         let timeoutInactividad;
@@ -53,44 +53,50 @@
                 timeoutApagado = setTimeout(() => { window.close(); }, 15000); 
             }, 30000); 
         }
-
         reiniciarTemporizador(); 
 
-        // --- EL MARTILLO DE PLAY (Idea del usuario) ---
-        let intervaloPlay;
-        function martillarPlay() {
-            clearInterval(intervaloPlay); // Limpiamos cualquier martillo anterior
-            let intentos = 0;
+        // --- LA SOLUCIÓN: Usar keyup y NO cancelar el evento ---
+        // Al dejar que el evento fluya naturalmente, el navegador nos da permiso de Autoplay
+        window.addEventListener('keyup', function(e) {
             
-            // Revisamos cada 500 milisegundos (medio segundo)
-            intervaloPlay = setInterval(() => {
-                intentos++;
-                const estadoActual = playerManager.getPlayerState();
-                
-                // Si encontramos que está en pausa, disparamos el Play
-                if (estadoActual === cast.framework.messages.PlayerState.PAUSED) {
-                    playerManager.play();
-                }
-                
-                // Detenemos el martillo si ya está reproduciendo, o si ya pasaron 5 segundos (10 intentos)
-                if (estadoActual === cast.framework.messages.PlayerState.PLAYING || intentos >= 10) {
-                    clearInterval(intervaloPlay);
-                }
-            }, 500);
-        }
-
-        // --- CONTROL REMOTO FÍSICO ---
-        window.addEventListener('keydown', function(e) {
-            
-            if (['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
-                e.preventDefault(); 
-            }
-
             if (overlay.style.display === 'flex') {
                 if (e.key === 'Enter') reiniciarTemporizador();
                 return; 
             }
 
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                
+                // Anti-rebote para evitar saltos locos del control
+                if (bloqueandoDobleClic) return;
+                bloqueandoDobleClic = true;
+                setTimeout(() => bloqueandoDobleClic = false, 800);
+
                 if (e.key === 'ArrowUp') {
                     canalActual = (canalActual + 1) % listaCanales.length;
+                } else {
+                    canalActual = (canalActual - 1 + listaCanales.length) % listaCanales.length;
+                }
+                
+                let request = new cast.framework.messages.LoadRequestData();
+                request.autoplay = true; 
+                
+                let mediaInfo = new cast.framework.messages.MediaInformation();
+                mediaInfo.contentId = listaCanales[canalActual].url;
+                mediaInfo.streamType = cast.framework.messages.StreamType.LIVE;
+                mediaInfo.contentType = 'application/x-mpegURL';
+                mediaInfo.metadata = new cast.framework.messages.GenericMediaMetadata();
+                mediaInfo.metadata.title = listaCanales[canalActual].nombre;
+                
+                request.media = mediaInfo;
+                playerManager.load(request);
+                
+                reiniciarTemporizador();
+            }
+        });
+
+        const playbackConfig = new cast.framework.PlaybackConfig();
+        playbackConfig.autoPauseDuration = 0; 
+        context.start({playbackConfig: playbackConfig});
+    </script>
+</body>
+</html>
