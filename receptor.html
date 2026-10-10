@@ -3,12 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <title>Boss TV Receiver</title>
-    <!-- SDK especial de Google Cast para Televisores -->
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
     <style>
         body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
         
-        /* Ocultamos la barra de controles y botones nativos de Google Cast */
+        /* Ocultamos cualquier interfaz nativa de Google Cast */
         cast-media-player { 
             width: 100vw; height: 100vh; 
             --splash-image: url('logo.png'); 
@@ -17,7 +16,6 @@
             --logo-image: none;
         }
         
-        /* Pantalla de inactividad blindada para estar siempre al frente */
         #overlay-inactividad {
             display: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
             background: rgba(0,0,0,0.95); color: white; justify-content: center; align-items: center;
@@ -47,7 +45,7 @@
         ];
         let canalActual = 0;
 
-        // --- LÓGICA DE INACTIVIDAD (Pruebas Rápidas) ---
+        // --- LÓGICA DE INACTIVIDAD (Prueba: 30s + 15s de espera) ---
         let timeoutInactividad;
         let timeoutApagado;
         const overlay = document.getElementById('overlay-inactividad');
@@ -57,11 +55,11 @@
             clearTimeout(timeoutApagado);
             overlay.style.display = 'none';
             
-            // Aparece a los 30 segundos
+            // Aparece a los 30 segundos exactos
             timeoutInactividad = setTimeout(() => {
                 overlay.style.display = 'flex'; 
                 
-                // Si en 15 segundos no presiona OK, apaga la app
+                // Si en 15 segundos extra no presiona OK, se cierra la app
                 timeoutApagado = setTimeout(() => {
                     window.close(); 
                 }, 15000); 
@@ -69,6 +67,17 @@
         }
 
         reiniciarTemporizador(); 
+
+        // --- POLÍTICA CERO PAUSAS ---
+        // Como quitamos el botón de pausa, si el reproductor detecta que está pausado, se fuerza a reproducir
+        playerManager.addEventListener(
+            cast.framework.events.EventType.PLAYER_STATE_CHANGED,
+            (event) => {
+                if (event.value === cast.framework.messages.PlayerState.PAUSED) {
+                    playerManager.play();
+                }
+            }
+        );
 
         // Sincronizar internamente el canal actual cuando lo mandan del celular
         playerManager.addEventListener(cast.framework.events.EventType.MEDIA_STATUS, (event) => {
@@ -78,13 +87,20 @@
             }
         });
 
+        // --- BLOQUEO TOTAL DE EVENTOS DEL CONTROL (Down, Up, Press) ---
+        function destruirEventoNativo(e) {
+            if (['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
+                e.preventDefault(); 
+                e.stopPropagation();
+            }
+        }
+        window.addEventListener('keyup', destruirEventoNativo, true);
+        window.addEventListener('keypress', destruirEventoNativo, true);
+
         // --- LÓGICA DEL CONTROL REMOTO FÍSICO ---
         window.addEventListener('keydown', function(e) {
             
-            // Bloqueamos la acción nativa de Android TV SOLO para las flechas y Enter
-            if (['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
-                e.preventDefault(); 
-            }
+            destruirEventoNativo(e);
 
             if (overlay.style.display === 'flex') {
                 if (e.key === 'Enter') { 
@@ -101,7 +117,7 @@
                 }
                 
                 let request = new cast.framework.messages.LoadRequestData();
-                request.autoplay = true; // Forzamos el Play al cargar
+                request.autoplay = true; 
                 
                 let mediaInfo = new cast.framework.messages.MediaInformation();
                 mediaInfo.contentId = listaCanales[canalActual].url;
@@ -112,15 +128,17 @@
                 
                 request.media = mediaInfo;
                 
-                playerManager.load(request).then(() => {
-                    playerManager.play(); 
-                }).catch(err => console.log('Error:', err));
+                // Detenemos el video actual agresivamente antes de cargar el nuevo
+                playerManager.stop();
+                setTimeout(() => {
+                    playerManager.load(request);
+                }, 50);
                 
                 reiniciarTemporizador();
             }
-        });
+        }, true);
 
-        // Evita que HLS pause transmisiones en vivo por defecto
+        // Evitar pausas nativas de HLS
         const playbackConfig = new cast.framework.PlaybackConfig();
         playbackConfig.autoPauseDuration = 0; 
         context.start({playbackConfig: playbackConfig});
