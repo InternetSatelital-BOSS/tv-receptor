@@ -3,11 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <title>Boss TV Receiver</title>
+    <!-- SDK de Google Cast -->
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
     <style>
         body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
         
-        cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); }
+        /* Nuestro propio reproductor de video crudo, sin la interfaz de Google */
+        #reproductor-boss { width: 100vw; height: 100vh; object-fit: contain; outline: none; background-color: #000; }
         
         #overlay-inactividad {
             display: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
@@ -20,7 +22,8 @@
 </head>
 <body>
     
-    <cast-media-player></cast-media-player>
+    <!-- Adiós cast-media-player, hola video nativo -->
+    <video id="reproductor-boss" autoplay></video>
     
     <div id="overlay-inactividad">
         <div class="mensaje">¿Sigues viendo la TV?<br>Presiona "OK" en tu control remoto para continuar.</div>
@@ -30,6 +33,7 @@
     <script>
         const context = cast.framework.CastReceiverContext.getInstance();
         const playerManager = context.getPlayerManager();
+        const miVideo = document.getElementById('reproductor-boss');
         
         const listaCanales = [
             { nombre: "XHTOL", url: "https://tv.vpnsolucionesboss.online/hls/XHTOL/playlist.m3u8" },
@@ -38,7 +42,11 @@
         ];
         let canalActual = 0;
 
-        // --- LÓGICA DE INACTIVIDAD (Pruebas: 30s + 15s) ---
+        // Mantener el foco en nuestro video para evitar que Android TV se "salga"
+        miVideo.focus();
+        miVideo.addEventListener('blur', () => miVideo.focus());
+
+        // --- LÓGICA DE INACTIVIDAD ---
         let timeoutInactividad;
         let timeoutApagado;
         const overlay = document.getElementById('overlay-inactividad');
@@ -47,43 +55,25 @@
             clearTimeout(timeoutInactividad);
             clearTimeout(timeoutApagado);
             overlay.style.display = 'none';
+            miVideo.focus();
             
             timeoutInactividad = setTimeout(() => {
                 overlay.style.display = 'flex'; 
-                
                 timeoutApagado = setTimeout(() => {
                     window.close(); 
                 }, 15000); 
             }, 30000); 
         }
-
         reiniciarTemporizador(); 
-
-        // --- EL HACK DEL VIDEO NATIVO ---
-        // Le inyectamos eventos directamente a la etiqueta <video> de HTML5 para puentear a Google
-        function forzarVideoNativo() {
-            const videoCrudo = playerManager.getMediaElement();
-            if (videoCrudo) {
-                videoCrudo.autoplay = true;
-                if (videoCrudo.paused) {
-                    videoCrudo.play().catch(e => console.log('Hack de video falló:', e));
-                }
-            }
-        }
 
         // --- CONTROL REMOTO FÍSICO ---
         window.addEventListener('keydown', function(e) {
             
-            // Bloqueo estricto del sistema de la TV
-            if (['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
-                e.preventDefault(); 
-            }
+            // Bloqueamos cualquier acción nativa del TV Box
+            e.preventDefault(); 
 
             if (overlay.style.display === 'flex') {
-                if (e.key === 'Enter') { 
-                    reiniciarTemporizador();
-                    forzarVideoNativo();
-                }
+                if (e.key === 'Enter') reiniciarTemporizador();
                 return; 
             }
 
@@ -101,26 +91,26 @@
                 mediaInfo.contentId = listaCanales[canalActual].url;
                 mediaInfo.streamType = cast.framework.messages.StreamType.LIVE;
                 mediaInfo.contentType = 'application/x-mpegURL';
-                mediaInfo.metadata = new cast.framework.messages.GenericMediaMetadata();
-                mediaInfo.metadata.title = listaCanales[canalActual].nombre;
                 
                 request.media = mediaInfo;
                 
-                // Cargamos y aplicamos el hack inmediatamente después
+                // Cargamos en el manager y forzamos play directamente en el HTML5
                 playerManager.load(request).then(() => {
-                    forzarVideoNativo(); // Orden directa a HTML5
-                    
-                    // Un segundo disparo por si la TV Box es lenta procesando
-                    setTimeout(forzarVideoNativo, 300);
+                    miVideo.play();
                 });
                 
                 reiniciarTemporizador();
             }
         });
 
+        // INICIAMOS EL SISTEMA ENCHUFÁNDOLO A NUESTRO VIDEO NATIVO
         const playbackConfig = new cast.framework.PlaybackConfig();
         playbackConfig.autoPauseDuration = 0; 
-        context.start({playbackConfig: playbackConfig});
+        
+        context.start({
+            playbackConfig: playbackConfig,
+            mediaElement: miVideo // AQUÍ ESTÁ LA MAGIA
+        });
     </script>
 </body>
 </html>
