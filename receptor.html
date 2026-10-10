@@ -8,7 +8,7 @@
     <style>
         body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
         
-        cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); }
+        cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); outline: none; }
         
         #overlay-inactividad {
             display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -21,7 +21,7 @@
 </head>
 <body>
     
-    <cast-media-player></cast-media-player>
+    <cast-media-player tabindex="0"></cast-media-player>
     
     <div id="overlay-inactividad">
         <div class="mensaje">¿Sigues viendo la TV?<br>Presiona "OK" en tu control remoto para continuar.</div>
@@ -39,19 +39,43 @@
         ];
         
         let canalActual = 0;
+        let escudoAntiPausas = false;
+        let timeoutEscudo;
 
-        // --- 1. EL INTERCEPTOR MAESTRO ---
+        // --- 1. LOS INTERCEPTORES MAESTROS ---
+        
+        // A. Interceptor de Carga: Sincroniza la memoria y fuerza el Autoplay
         playerManager.setMessageInterceptor(
             cast.framework.messages.MessageType.LOAD,
             request => {
                 if (request.media && request.media.contentId) {
-                    let indiceEncontrado = listaCanales.findIndex(c => c.url === request.media.contentId);
-                    if (indiceEncontrado !== -1) {
-                        canalActual = indiceEncontrado;
-                    }
+                    let indice = listaCanales.findIndex(c => c.url === request.media.contentId);
+                    if (indice !== -1) canalActual = indice;
                 }
                 request.autoplay = true;
                 return request;
+            }
+        );
+
+        // B. Interceptor de Pausa (El Escudo): Destruye pausas fantasma del celular
+        playerManager.setMessageInterceptor(
+            cast.framework.messages.MessageType.PAUSE,
+            request => {
+                if (escudoAntiPausas) {
+                    console.log("Pausa fantasma bloqueada por el escudo.");
+                    return null; // Devolver null cancela la petición de pausa
+                }
+                return request;
+            }
+        );
+
+        // C. Vigilante Interno: Si el sistema operativo pausa el video por error, lo forzamos a Play
+        playerManager.addEventListener(
+            cast.framework.events.EventType.PLAYER_STATE_CHANGED,
+            (event) => {
+                if (escudoAntiPausas && event.value === cast.framework.messages.PlayerState.PAUSED) {
+                    playerManager.play();
+                }
             }
         );
 
@@ -72,7 +96,7 @@
                 timeoutApagado = setTimeout(() => {
                     window.close(); 
                 }, 60000); 
-            }, 10800000); 
+            }, 10800000); // 3 horas
         }
 
         reiniciarTemporizador(); 
@@ -80,7 +104,7 @@
         // --- 3. CONTROL REMOTO DE LA TV BOX ---
         window.addEventListener('keydown', function(e) {
             
-            // ¡ESTO ES CLAVE! Bloquea las pausas automáticas de Android TV
+            // Bloquea funciones raras de Android TV sobre las teclas
             e.preventDefault(); 
             
             if (overlay.style.display === 'flex') {
@@ -93,12 +117,22 @@
 
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 
+                // 1. ACTIVAMOS EL ESCUDO ANTI-PAUSAS (Dura 6 segundos)
+                escudoAntiPausas = true;
+                clearTimeout(timeoutEscudo);
+                timeoutEscudo = setTimeout(() => { escudoAntiPausas = false; }, 6000);
+
+                // 2. Mantenemos el foco en el reproductor para evitar pausas por pérdida de foco
+                document.querySelector('cast-media-player').focus();
+                
+                // 3. Calculamos el canal siguiente
                 if (e.key === 'ArrowUp') {
                     canalActual = (canalActual + 1 >= listaCanales.length) ? 0 : canalActual + 1;
                 } else if (e.key === 'ArrowDown') {
                     canalActual = (canalActual - 1 < 0) ? listaCanales.length - 1 : canalActual - 1;
                 }
                 
+                // 4. Preparamos y enviamos la señal
                 let request = new cast.framework.messages.LoadRequestData();
                 let mediaInfo = new cast.framework.messages.MediaInformation();
                 mediaInfo.contentId = listaCanales[canalActual].url;
@@ -108,21 +142,13 @@
                 mediaInfo.metadata.title = listaCanales[canalActual].nombre;
                 
                 request.media = mediaInfo;
-                
-                // 1. Apagamos por completo el reproductor viejo para limpiar la memoria
-                playerManager.stop();
-                
-                // 2. Esperamos un instante microscópico y cargamos el nuevo canal
-                setTimeout(() => {
-                    playerManager.load(request).then(() => {
-                        playerManager.play(); // Play forzado
-                    }).catch(err => console.log('Error:', err));
-                }, 50);
+                playerManager.load(request);
                 
                 reiniciarTemporizador();
             }
             
             else if (e.key === 'Enter') {
+                escudoAntiPausas = false; // Apagamos el escudo para que el usuario sí pueda pausar con OK
                 if (playerManager.getPlayerState() === cast.framework.messages.PlayerState.PLAYING) {
                     playerManager.pause();
                 } else {
