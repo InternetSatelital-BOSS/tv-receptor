@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Boss TV Receiver</title>
+    <!-- SDK especial de Google Cast para Televisores -->
+    <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+    <style>
+        body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
+        
+        /* El reproductor nativo de Google Cast ocupa toda la pantalla */
+        cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); }
+        
+        /* Pantalla de "¿Sigues ahí?" */
+        #overlay-inactividad {
+            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); color: white; justify-content: center; align-items: center;
+            flex-direction: column; z-index: 1000;
+        }
+        .mensaje { font-size: 2.5em; font-weight: bold; margin-bottom: 30px; text-align: center; }
+        .boton-ok { background: #9ACD32; color: #000; padding: 15px 50px; font-size: 2em; border-radius: 30px; font-weight: bold; box-shadow: 0 4px 10px rgba(154, 205, 50, 0.5); }
+    </style>
+</head>
+<body>
+    
+    <cast-media-player></cast-media-player>
+    
+    <div id="overlay-inactividad">
+        <div class="mensaje">¿Sigues viendo la TV?<br>Presiona "OK" en tu control remoto para continuar.</div>
+        <div class="boton-ok">OK</div>
+    </div>
+
+    <script>
+        const context = cast.framework.CastReceiverContext.getInstance();
+        const playerManager = context.getPlayerManager();
+        
+        // La TV Box necesita su propia lista para poder cambiar de canal con el control físico
+        // Asegúrate de usar rutas absolutas HTTPS
+        const listaCanales = [
+            { nombre: "XHTOL", url: "https://tv.vpnsolucionesboss.online/hls/XHTOL/playlist.m3u8" },
+            { nombre: "Canal 5", url: "https://tv.vpnsolucionesboss.online/hls/Canal_Cinco/playlist.m3u8" },
+            { nombre: "Las Estrellas", url: "https://tv.vpnsolucionesboss.online/hls/Las_Estrellas/playlist.m3u8" }
+        ];
+        let canalActual = 0;
+
+        // --- LÓGICA DE INACTIVIDAD (¿Sigues ahí?) ---
+        let timeoutInactividad;
+        let timeoutApagado;
+        const overlay = document.getElementById('overlay-inactividad');
+        
+        function reiniciarTemporizador() {
+            clearTimeout(timeoutInactividad);
+            clearTimeout(timeoutApagado);
+            overlay.style.display = 'none';
+            
+            // 10800000 = 3 horas. (Para hacer pruebas rápidas pon 60000 que es 1 minuto).
+            timeoutInactividad = setTimeout(() => {
+                overlay.style.display = 'flex'; // Muestra el mensaje
+                playerManager.pause(); // Pausa el video
+                
+                // Si en 1 minuto nadie presiona OK, apaga la transmisión
+                timeoutApagado = setTimeout(() => {
+                    window.close(); 
+                }, 60000); 
+            }, 10800000); 
+        }
+
+        reiniciarTemporizador(); // Arranca el reloj en cuanto la TV enciende
+
+        // --- LÓGICA DEL CONTROL REMOTO DE LA TV BOX ---
+        window.addEventListener('keydown', function(e) {
+            
+            // 1. Si el aviso de inactividad está en pantalla y presionan Enter (OK), regresamos al video
+            if (overlay.style.display === 'flex') {
+                if (e.key === 'Enter') { 
+                    reiniciarTemporizador();
+                    playerManager.play(); 
+                }
+                return; // Bloquea los demás botones mientras esté el aviso
+            }
+
+            // 2. Cambiar de canal con flechas Arriba / Abajo
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                if (e.key === 'ArrowUp') {
+                    canalActual = (canalActual + 1 >= listaCanales.length) ? 0 : canalActual + 1;
+                } else if (e.key === 'ArrowDown') {
+                    canalActual = (canalActual - 1 < 0) ? listaCanales.length - 1 : canalActual - 1;
+                }
+                
+                // Cargar el nuevo canal en el reproductor de la TV
+                let request = new cast.framework.messages.LoadRequestData();
+                let mediaInfo = new cast.framework.messages.MediaInformation();
+                mediaInfo.contentId = listaCanales[canalActual].url;
+                mediaInfo.streamType = cast.framework.messages.StreamType.LIVE;
+                mediaInfo.contentType = 'application/x-mpegURL';
+                mediaInfo.metadata = new cast.framework.messages.GenericMediaMetadata();
+                mediaInfo.metadata.title = listaCanales[canalActual].nombre;
+                
+                request.media = mediaInfo;
+                playerManager.load(request);
+                
+                reiniciarTemporizador();
+            }
+            
+            // 3. Pausar o reanudar con Enter (OK)
+            else if (e.key === 'Enter') {
+                if (playerManager.getPlayerState() === cast.framework.messages.PlayerState.PLAYING) {
+                    playerManager.pause();
+                } else {
+                    playerManager.play();
+                }
+                reiniciarTemporizador();
+            }
+        });
+
+        // Configuración para transmisiones en vivo
+        const playbackConfig = new cast.framework.PlaybackConfig();
+        playbackConfig.autoResumeDuration = 5;
+        context.start({playbackConfig: playbackConfig});
+    </script>
+</body>
+</html>
