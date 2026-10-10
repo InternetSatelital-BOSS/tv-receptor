@@ -7,14 +7,7 @@
     <style>
         body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
         
-        /* Ocultamos cualquier interfaz de Google */
-        cast-media-player { 
-            width: 100vw; height: 100vh; 
-            --splash-image: url('logo.png'); 
-            --control-bar-height: 0px; 
-            --bottom-progress-bar-height: 0px;
-            --logo-image: none;
-        }
+        cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); }
         
         #overlay-inactividad {
             display: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
@@ -37,9 +30,6 @@
     <script>
         const context = cast.framework.CastReceiverContext.getInstance();
         const playerManager = context.getPlayerManager();
-
-        // EL BLOQUEO DEFINITIVO: Le decimos a Android TV que esta aplicación no soporta la función de Pausa.
-        playerManager.removeSupportedMediaCommands(cast.framework.messages.Command.PAUSE);
         
         const listaCanales = [
             { nombre: "XHTOL", url: "https://tv.vpnsolucionesboss.online/hls/XHTOL/playlist.m3u8" },
@@ -48,7 +38,7 @@
         ];
         let canalActual = 0;
 
-        // --- LÓGICA DE INACTIVIDAD (Prueba rápida: 30s + 15s) ---
+        // --- LÓGICA DE INACTIVIDAD (30s + 15s) ---
         let timeoutInactividad;
         let timeoutApagado;
         const overlay = document.getElementById('overlay-inactividad');
@@ -66,6 +56,29 @@
 
         reiniciarTemporizador(); 
 
+        // --- EL MARTILLO DE PLAY (Idea del usuario) ---
+        let intervaloPlay;
+        function martillarPlay() {
+            clearInterval(intervaloPlay); // Limpiamos cualquier martillo anterior
+            let intentos = 0;
+            
+            // Revisamos cada 500 milisegundos (medio segundo)
+            intervaloPlay = setInterval(() => {
+                intentos++;
+                const estadoActual = playerManager.getPlayerState();
+                
+                // Si encontramos que está en pausa, disparamos el Play
+                if (estadoActual === cast.framework.messages.PlayerState.PAUSED) {
+                    playerManager.play();
+                }
+                
+                // Detenemos el martillo si ya está reproduciendo, o si ya pasaron 5 segundos (10 intentos)
+                if (estadoActual === cast.framework.messages.PlayerState.PLAYING || intentos >= 10) {
+                    clearInterval(intervaloPlay);
+                }
+            }, 500);
+        }
+
         // --- CONTROL REMOTO FÍSICO ---
         window.addEventListener('keydown', function(e) {
             
@@ -81,30 +94,3 @@
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 if (e.key === 'ArrowUp') {
                     canalActual = (canalActual + 1) % listaCanales.length;
-                } else {
-                    canalActual = (canalActual - 1 + listaCanales.length) % listaCanales.length;
-                }
-                
-                let request = new cast.framework.messages.LoadRequestData();
-                request.autoplay = true; 
-                
-                let mediaInfo = new cast.framework.messages.MediaInformation();
-                mediaInfo.contentId = listaCanales[canalActual].url;
-                mediaInfo.streamType = cast.framework.messages.StreamType.LIVE;
-                mediaInfo.contentType = 'application/x-mpegURL';
-                mediaInfo.metadata = new cast.framework.messages.GenericMediaMetadata();
-                mediaInfo.metadata.title = listaCanales[canalActual].nombre;
-                
-                request.media = mediaInfo;
-                playerManager.load(request);
-                
-                reiniciarTemporizador();
-            }
-        });
-
-        const playbackConfig = new cast.framework.PlaybackConfig();
-        playbackConfig.autoPauseDuration = 0; 
-        context.start({playbackConfig: playbackConfig});
-    </script>
-</body>
-</html>
