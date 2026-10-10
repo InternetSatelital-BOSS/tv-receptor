@@ -3,23 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <title>Boss TV Receiver</title>
+    <!-- SDK de Google Cast -->
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
     <style>
         body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
         
-        /* Ocultamos cualquier interfaz nativa de Google Cast */
-        cast-media-player { 
-            width: 100vw; height: 100vh; 
-            --splash-image: url('logo.png'); 
-            --control-bar-height: 0px; 
-            --bottom-progress-bar-height: 0px;
-            --logo-image: none;
+        cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); }
+
+        /* EL ESCUDO MÁGICO: Atrapa los clics antes de que lleguen al reproductor de Google */
+        #trampa-controles {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            z-index: 900; outline: none; background: transparent; cursor: default;
         }
-        
+
+        /* Aviso de Inactividad */
         #overlay-inactividad {
             display: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
             background: rgba(0,0,0,0.95); color: white; justify-content: center; align-items: center;
-            flex-direction: column; z-index: 9999;
+            flex-direction: column; z-index: 1000;
         }
         .mensaje { font-size: 2.5em; font-weight: bold; margin-bottom: 30px; text-align: center; }
         .boton-ok { background: #9ACD32; color: #000; padding: 15px 50px; font-size: 2em; border-radius: 30px; font-weight: bold; }
@@ -28,6 +29,9 @@
 <body>
     
     <cast-media-player></cast-media-player>
+    
+    <!-- Esta es la capa que robará todos los botones del control físico -->
+    <div id="trampa-controles" tabindex="0"></div>
     
     <div id="overlay-inactividad">
         <div class="mensaje">¿Sigues viendo la TV?<br>Presiona "OK" en tu control remoto para continuar.</div>
@@ -45,21 +49,29 @@
         ];
         let canalActual = 0;
 
-        // --- LÓGICA DE INACTIVIDAD (Prueba: 30s + 15s de espera) ---
+        const trampa = document.getElementById('trampa-controles');
+        const overlay = document.getElementById('overlay-inactividad');
+
+        // 1. OBLIGAR A LA TV BOX A MIRAR LA TRAMPA (Reafirmamos el foco cada medio segundo)
+        setInterval(() => {
+            if (document.activeElement !== trampa) {
+                trampa.focus();
+            }
+        }, 500);
+        trampa.focus();
+
+        // 2. LÓGICA DE INACTIVIDAD (Pruebas Rápidas: 30s + 15s)
         let timeoutInactividad;
         let timeoutApagado;
-        const overlay = document.getElementById('overlay-inactividad');
         
         function reiniciarTemporizador() {
             clearTimeout(timeoutInactividad);
             clearTimeout(timeoutApagado);
             overlay.style.display = 'none';
+            trampa.focus(); // Regresamos el foco al cristal
             
-            // Aparece a los 30 segundos exactos
             timeoutInactividad = setTimeout(() => {
                 overlay.style.display = 'flex'; 
-                
-                // Si en 15 segundos extra no presiona OK, se cierra la app
                 timeoutApagado = setTimeout(() => {
                     window.close(); 
                 }, 15000); 
@@ -68,39 +80,11 @@
 
         reiniciarTemporizador(); 
 
-        // --- POLÍTICA CERO PAUSAS ---
-        // Como quitamos el botón de pausa, si el reproductor detecta que está pausado, se fuerza a reproducir
-        playerManager.addEventListener(
-            cast.framework.events.EventType.PLAYER_STATE_CHANGED,
-            (event) => {
-                if (event.value === cast.framework.messages.PlayerState.PAUSED) {
-                    playerManager.play();
-                }
-            }
-        );
-
-        // Sincronizar internamente el canal actual cuando lo mandan del celular
-        playerManager.addEventListener(cast.framework.events.EventType.MEDIA_STATUS, (event) => {
-            if (event.mediaStatus && event.mediaStatus.media && event.mediaStatus.media.contentId) {
-                let index = listaCanales.findIndex(c => c.url === event.mediaStatus.media.contentId);
-                if (index !== -1) canalActual = index;
-            }
-        });
-
-        // --- BLOQUEO TOTAL DE EVENTOS DEL CONTROL (Down, Up, Press) ---
-        function destruirEventoNativo(e) {
-            if (['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
-                e.preventDefault(); 
-                e.stopPropagation();
-            }
-        }
-        window.addEventListener('keyup', destruirEventoNativo, true);
-        window.addEventListener('keypress', destruirEventoNativo, true);
-
-        // --- LÓGICA DEL CONTROL REMOTO FÍSICO ---
-        window.addEventListener('keydown', function(e) {
+        // 3. ESCUCHAR LOS BOTONES *EXCLUSIVAMENTE* DESDE EL CRISTAL INVISIBLE
+        trampa.addEventListener('keydown', function(e) {
             
-            destruirEventoNativo(e);
+            e.preventDefault(); 
+            e.stopPropagation();
 
             if (overlay.style.display === 'flex') {
                 if (e.key === 'Enter') { 
@@ -128,17 +112,14 @@
                 
                 request.media = mediaInfo;
                 
-                // Detenemos el video actual agresivamente antes de cargar el nuevo
-                playerManager.stop();
-                setTimeout(() => {
-                    playerManager.load(request);
-                }, 50);
+                // Hacemos la carga. Para el reproductor, esta orden llegó "de la nada" (como el celular)
+                playerManager.load(request);
                 
                 reiniciarTemporizador();
             }
-        }, true);
+        });
 
-        // Evitar pausas nativas de HLS
+        // Apagar configuración por defecto
         const playbackConfig = new cast.framework.PlaybackConfig();
         playbackConfig.autoPauseDuration = 0; 
         context.start({playbackConfig: playbackConfig});
