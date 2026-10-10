@@ -8,10 +8,8 @@
     <style>
         body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
         
-        /* El reproductor nativo de Google Cast ocupa toda la pantalla */
         cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); }
         
-        /* Pantalla de "¿Sigues ahí?" */
         #overlay-inactividad {
             display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.9); color: white; justify-content: center; align-items: center;
@@ -34,16 +32,30 @@
         const context = cast.framework.CastReceiverContext.getInstance();
         const playerManager = context.getPlayerManager();
         
-        // La TV Box necesita su propia lista para poder cambiar de canal con el control físico
-        // Asegúrate de usar rutas absolutas HTTPS
         const listaCanales = [
             { nombre: "XHTOL", url: "https://tv.vpnsolucionesboss.online/hls/XHTOL/playlist.m3u8" },
             { nombre: "Canal 5", url: "https://tv.vpnsolucionesboss.online/hls/Canal_Cinco/playlist.m3u8" },
             { nombre: "Las Estrellas", url: "https://tv.vpnsolucionesboss.online/hls/Las_Estrellas/playlist.m3u8" }
         ];
         let canalActual = 0;
+        let forzarPlay = false; // LA BANDERA MÁGICA
 
-        // --- LÓGICA DE INACTIVIDAD (¿Sigues ahí?) ---
+        // --- VIGILANTE DE REPRODUCCIÓN ESTRICTO ---
+        playerManager.addEventListener(
+            cast.framework.events.EventType.PLAYER_STATE_CHANGED,
+            (event) => {
+                // Si la TV se pone en pausa sola, pero nuestra bandera dice que acabamos de cambiar de canal: forzamos el Play
+                if (event.value === cast.framework.messages.PlayerState.PAUSED && forzarPlay) {
+                    playerManager.play();
+                } 
+                // Si ya está reproduciendo felizmente, apagamos la bandera
+                else if (event.value === cast.framework.messages.PlayerState.PLAYING) {
+                    forzarPlay = false; 
+                }
+            }
+        );
+
+        // --- LÓGICA DE INACTIVIDAD ---
         let timeoutInactividad;
         let timeoutApagado;
         const overlay = document.getElementById('overlay-inactividad');
@@ -53,32 +65,29 @@
             clearTimeout(timeoutApagado);
             overlay.style.display = 'none';
             
-            // 10800000 = 3 horas. (Para hacer pruebas rápidas pon 60000 que es 1 minuto).
             timeoutInactividad = setTimeout(() => {
-                overlay.style.display = 'flex'; // Muestra el mensaje
-                playerManager.pause(); // Pausa el video
+                overlay.style.display = 'flex'; 
+                playerManager.pause(); 
                 
-                // Si en 1 minuto nadie presiona OK, apaga la transmisión
                 timeoutApagado = setTimeout(() => {
                     window.close(); 
                 }, 60000); 
-            }, 10800000); 
+            }, 10800000); // 3 horas
         }
 
-        reiniciarTemporizador(); // Arranca el reloj en cuanto la TV enciende
+        reiniciarTemporizador(); 
 
-        // --- LÓGICA DEL CONTROL REMOTO DE LA TV BOX ---
+        // --- LÓGICA DEL CONTROL REMOTO ---
         window.addEventListener('keydown', function(e) {
             
-            // 1. Si el aviso de inactividad está en pantalla y presionan Enter (OK), regresamos al video
             if (overlay.style.display === 'flex') {
                 if (e.key === 'Enter') { 
                     reiniciarTemporizador();
                     playerManager.play(); 
                 }
-                return; // Bloquea los demás botones mientras esté el aviso
+                return; 
             }
-                // 2. Cambiar de canal con flechas Arriba / Abajo
+
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 if (e.key === 'ArrowUp') {
                     canalActual = (canalActual + 1 >= listaCanales.length) ? 0 : canalActual + 1;
@@ -86,9 +95,10 @@
                     canalActual = (canalActual - 1 < 0) ? listaCanales.length - 1 : canalActual - 1;
                 }
                 
-                // Cargar el nuevo canal en el reproductor de la TV
+                forzarPlay = true; // ACTIVAMOS EL VIGILANTE justo antes de pedir el cambio de canal
+
                 let request = new cast.framework.messages.LoadRequestData();
-                request.autoplay = true; // <--- ESTA ES LA LÍNEA MÁGICA PARA EL AUTOPLAY
+                request.autoplay = true;
                 
                 let mediaInfo = new cast.framework.messages.MediaInformation();
                 mediaInfo.contentId = listaCanales[canalActual].url;
@@ -98,17 +108,13 @@
                 mediaInfo.metadata.title = listaCanales[canalActual].nombre;
                 
                 request.media = mediaInfo;
-                
-                // Forzamos explícitamente el Play en cuanto la TV termine de cargar la señal
-                playerManager.load(request).then(() => {
-                    playerManager.play();
-                }).catch((e) => console.log('Error cargando canal:', e));
+                playerManager.load(request);
                 
                 reiniciarTemporizador();
             }
             
-            // 3. Pausar o reanudar con Enter (OK)
             else if (e.key === 'Enter') {
+                forzarPlay = false; // Desactivamos el vigilante para que el usuario sí pueda pausar manualmente
                 if (playerManager.getPlayerState() === cast.framework.messages.PlayerState.PLAYING) {
                     playerManager.pause();
                 } else {
@@ -118,7 +124,6 @@
             }
         });
 
-        // Configuración para transmisiones en vivo
         const playbackConfig = new cast.framework.PlaybackConfig();
         playbackConfig.autoResumeDuration = 5;
         context.start({playbackConfig: playbackConfig});
