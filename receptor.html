@@ -3,29 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <title>Boss TV Receiver</title>
-    <!-- SDK especial de Google Cast para Televisores -->
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
     <style>
-        body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
-        cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); outline: none; }
-        
-        #overlay-inactividad {
-            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9); color: white; justify-content: center; align-items: center;
-            flex-direction: column; z-index: 1000;
-        }
-        .mensaje { font-size: 2.5em; font-weight: bold; margin-bottom: 30px; text-align: center; }
-        .boton-ok { background: #9ACD32; color: #000; padding: 15px 50px; font-size: 2em; border-radius: 30px; font-weight: bold; box-shadow: 0 4px 10px rgba(154, 205, 50, 0.5); }
+        body { margin: 0; background-color: #000; overflow: hidden; font-family: sans-serif; }
+        /* Apagamos cualquier outline que pueda robar el foco */
+        cast-media-player { width: 100vw; height: 100vh; outline: none; --splash-image: url('logo.png'); }
     </style>
 </head>
 <body>
     
     <cast-media-player></cast-media-player>
-    
-    <div id="overlay-inactividad">
-        <div class="mensaje">¿Sigues viendo la TV?<br>Presiona "OK" en tu control remoto para continuar.</div>
-        <div class="boton-ok">OK</div>
-    </div>
 
     <script>
         const context = cast.framework.CastReceiverContext.getInstance();
@@ -38,131 +25,89 @@
         ];
         
         let canalActual = 0;
-        let usuarioQuierePausa = false;
-        let enforcerInterval = null;
 
-        // 1. SINCRONIZACIÓN PERFECTA (A prueba de fallos)
-        playerManager.addEventListener(cast.framework.events.EventType.MEDIA_STATUS, (event) => {
-            if (event.mediaStatus && event.mediaStatus.media && event.mediaStatus.media.contentId) {
-                let urlCargada = event.mediaStatus.media.contentId;
-                let index = listaCanales.findIndex(c => c.url === urlCargada);
-                if (index !== -1) canalActual = index;
-            }
-        });
-
-        // 2. MOTOR DE FUERZA BRUTA PARA EL AUTOPLAY
-        function forzarReproduccionContinua() {
-            if (enforcerInterval) clearInterval(enforcerInterval);
-            usuarioQuierePausa = false;
-            
-            enforcerInterval = setInterval(() => {
-                if (!usuarioQuierePausa) {
-                    let estado = playerManager.getPlayerState();
-                    if (estado === cast.framework.messages.PlayerState.PAUSED) {
-                        console.log("Forzando PLAY por motor de fuerza bruta");
-                        playerManager.play();
-                    }
+        // 1. SINCRONIZADOR EXACTO POR NOMBRE
+        playerManager.setMessageInterceptor(
+            cast.framework.messages.MessageType.LOAD,
+            request => {
+                if (request.media && request.media.metadata && request.media.metadata.title) {
+                    let idx = listaCanales.findIndex(c => c.nombre === request.media.metadata.title);
+                    if (idx !== -1) canalActual = idx;
                 }
-            }, 1000); // Revisa cada segundo y si está pausado, lo reproduce
+                request.autoplay = true;
+                return request;
+            }
+        );
+
+        // 2. ESCUDO ANTI-CELULAR: El teléfono ya no tiene permiso de pausar la TV. 
+        // Solo el control físico de la TV podrá pausarla.
+        playerManager.setMessageInterceptor(
+            cast.framework.messages.MessageType.PAUSE,
+            request => {
+                return null; // Destruye la orden de pausa que envía el celular
+            }
+        );
+
+        // --- TEMPORIZADOR DE INACTIVIDAD (3 Horas) ---
+        let temporizadorApagado;
+        function reiniciarReloj() {
+            clearTimeout(temporizadorApagado);
+            temporizadorApagado = setTimeout(() => { window.close(); }, 10800000);
         }
+        reiniciarReloj();
 
-        forzarReproduccionContinua(); // Encender motor al inicio
-
-        // Asegurar que cualquier carga externa active el motor
-        playerManager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, request => {
-            request.autoplay = true;
-            forzarReproduccionContinua();
-            return request;
-        });
-
-        // 3. LÓGICA DE INACTIVIDAD
-        let timeoutInactividad;
-        let timeoutApagado;
-        const overlay = document.getElementById('overlay-inactividad');
+        // 3. MODO DIOS DEL TECLADO (El "true" al final es lo que roba el control a Android TV)
+        let bloqueando = false;
         
-        function reiniciarTemporizador() {
-            clearTimeout(timeoutInactividad);
-            clearTimeout(timeoutApagado);
-            overlay.style.display = 'none';
-            
-            timeoutInactividad = setTimeout(() => {
-                overlay.style.display = 'flex'; 
-                usuarioQuierePausa = true; 
-                playerManager.pause(); 
-                
-                timeoutApagado = setTimeout(() => {
-                    window.close(); 
-                }, 60000); 
-            }, 10800000); // 3 horas
-        }
-
-        reiniciarTemporizador(); 
-
-        // 4. CONTROL REMOTO CON ANTI-REBOTE FANTASMA
-        let bloqueandoBotones = false;
-
         window.addEventListener('keydown', function(e) {
-            e.preventDefault(); 
-            
-            if (overlay.style.display === 'flex') {
-                if (e.key === 'Enter') { 
-                    reiniciarTemporizador();
-                    forzarReproduccionContinua();
-                }
-                return; 
-            }
+            // Destruimos la orden para que Android TV no cause pausas
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
 
-            // Si el control manda doble señal, esta línea ignora la segunda
-            if (bloqueandoBotones) return; 
+            if (bloqueando) return; // Anti-rebote para controles locos
 
-            // Detectamos las flechas (incluyendo códigos alternativos de TV Box)
-            if (['ArrowUp', 'ChannelUp', 'MediaNextTrack'].includes(e.key) || 
-                ['ArrowDown', 'ChannelDown', 'MediaPreviousTrack'].includes(e.key)) {
-                
-                bloqueandoBotones = true;
-                setTimeout(() => { bloqueandoBotones = false; }, 800); // Bloqueamos el control por casi un segundo
-                
-                if (['ArrowUp', 'ChannelUp', 'MediaNextTrack'].includes(e.key)) {
-                    canalActual = (canalActual + 1 >= listaCanales.length) ? 0 : canalActual + 1;
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                bloqueando = true;
+                setTimeout(() => { bloqueando = false; }, 600); // Bloquea medio segundo
+
+                // Cálculo matemático para cambiar canal
+                if (e.key === 'ArrowUp') {
+                    canalActual = (canalActual + 1) % listaCanales.length;
                 } else {
-                    canalActual = (canalActual - 1 < 0) ? listaCanales.length - 1 : canalActual - 1;
+                    canalActual = (canalActual - 1 + listaCanales.length) % listaCanales.length;
                 }
-                
+
                 let request = new cast.framework.messages.LoadRequestData();
                 request.autoplay = true;
+                request.media = new cast.framework.messages.MediaInformation();
+                request.media.contentId = listaCanales[canalActual].url;
+                request.media.streamType = cast.framework.messages.StreamType.LIVE;
+                request.media.contentType = 'application/x-mpegURL';
+                request.media.metadata = new cast.framework.messages.GenericMediaMetadata();
+                request.media.metadata.title = listaCanales[canalActual].nombre;
+
+                playerManager.load(request).then(() => {
+                    playerManager.play(); // Fuerza Play sí o sí
+                }).catch(()=>{});
+
+                reiniciarReloj();
+
+            } else if (e.key === 'Enter') {
+                bloqueando = true;
+                setTimeout(() => { bloqueando = false; }, 600);
                 
-                let mediaInfo = new cast.framework.messages.MediaInformation();
-                mediaInfo.contentId = listaCanales[canalActual].url;
-                mediaInfo.streamType = cast.framework.messages.StreamType.LIVE;
-                mediaInfo.contentType = 'application/x-mpegURL';
-                mediaInfo.metadata = new cast.framework.messages.GenericMediaMetadata();
-                mediaInfo.metadata.title = listaCanales[canalActual].nombre;
-                
-                request.media = mediaInfo;
-                
-                forzarReproduccionContinua(); // Reactivamos fuerza bruta
-                playerManager.load(request);
-                
-                reiniciarTemporizador();
-            }
-            
-            // Botón central (OK / Enter) para pausar manualmente
-            else if (e.key === 'Enter') {
                 if (playerManager.getPlayerState() === cast.framework.messages.PlayerState.PLAYING) {
-                    usuarioQuierePausa = true; // Apaga el motor de fuerza bruta
                     playerManager.pause();
                 } else {
-                    forzarReproduccionContinua(); // Enciende el motor
                     playerManager.play();
                 }
-                reiniciarTemporizador();
+                reiniciarReloj();
             }
-        });
+        }, true); // <-- ESTE 'true' ES LA MAGIA QUE NOS FALTABA
 
-        // Apagar el comportamiento de pausa por defecto de HLS
         const playbackConfig = new cast.framework.PlaybackConfig();
-        playbackConfig.autoPauseDuration = 0; 
-        playbackConfig.autoResumeDuration = 0;
+        playbackConfig.autoPauseDuration = 0; // Desactiva pausas nativas de HLS
         context.start({playbackConfig: playbackConfig});
     </script>
 </body>
