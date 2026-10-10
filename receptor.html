@@ -8,15 +8,23 @@
     <style>
         body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
         
-        cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); }
+        /* Ocultamos la barra de controles y botones nativos de Google Cast */
+        cast-media-player { 
+            width: 100vw; height: 100vh; 
+            --splash-image: url('logo.png'); 
+            --control-bar-height: 0px; 
+            --bottom-progress-bar-height: 0px;
+            --logo-image: none;
+        }
         
+        /* Pantalla de inactividad blindada para estar siempre al frente */
         #overlay-inactividad {
-            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9); color: white; justify-content: center; align-items: center;
-            flex-direction: column; z-index: 1000;
+            display: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0,0,0,0.95); color: white; justify-content: center; align-items: center;
+            flex-direction: column; z-index: 9999;
         }
         .mensaje { font-size: 2.5em; font-weight: bold; margin-bottom: 30px; text-align: center; }
-        .boton-ok { background: #9ACD32; color: #000; padding: 15px 50px; font-size: 2em; border-radius: 30px; font-weight: bold; box-shadow: 0 4px 10px rgba(154, 205, 50, 0.5); }
+        .boton-ok { background: #9ACD32; color: #000; padding: 15px 50px; font-size: 2em; border-radius: 30px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -39,7 +47,7 @@
         ];
         let canalActual = 0;
 
-        // --- LÓGICA DE INACTIVIDAD (Para pruebas) ---
+        // --- LÓGICA DE INACTIVIDAD (Pruebas Rápidas) ---
         let timeoutInactividad;
         let timeoutApagado;
         const overlay = document.getElementById('overlay-inactividad');
@@ -49,34 +57,42 @@
             clearTimeout(timeoutApagado);
             overlay.style.display = 'none';
             
-            // 30000 ms = 30 segundos para que aparezca el aviso
+            // Aparece a los 30 segundos
             timeoutInactividad = setTimeout(() => {
                 overlay.style.display = 'flex'; 
                 
-                // NOTA: Ya no enviamos orden de pausa aquí, la TV seguirá reproduciendo de fondo
-                
-                // 15000 ms = 15 segundos de tolerancia para presionar OK
+                // Si en 15 segundos no presiona OK, apaga la app
                 timeoutApagado = setTimeout(() => {
                     window.close(); 
                 }, 15000); 
             }, 30000); 
         }
 
-        reiniciarTemporizador();
+        reiniciarTemporizador(); 
+
+        // Sincronizar internamente el canal actual cuando lo mandan del celular
+        playerManager.addEventListener(cast.framework.events.EventType.MEDIA_STATUS, (event) => {
+            if (event.mediaStatus && event.mediaStatus.media && event.mediaStatus.media.contentId) {
+                let index = listaCanales.findIndex(c => c.url === event.mediaStatus.media.contentId);
+                if (index !== -1) canalActual = index;
+            }
+        });
 
         // --- LÓGICA DEL CONTROL REMOTO FÍSICO ---
         window.addEventListener('keydown', function(e) {
             
-            // 1. Si el aviso está en pantalla, el botón OK (Enter) lo quita y reinicia el reloj
+            // Bloqueamos la acción nativa de Android TV SOLO para las flechas y Enter
+            if (['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
+                e.preventDefault(); 
+            }
+
             if (overlay.style.display === 'flex') {
                 if (e.key === 'Enter') { 
                     reiniciarTemporizador();
-                    playerManager.play(); // Aseguramos que siga fluido
                 }
                 return; 
             }
 
-            // 2. Cambiar de canal con flechas Arriba / Abajo
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 if (e.key === 'ArrowUp') {
                     canalActual = (canalActual + 1 >= listaCanales.length) ? 0 : canalActual + 1;
@@ -85,6 +101,8 @@
                 }
                 
                 let request = new cast.framework.messages.LoadRequestData();
+                request.autoplay = true; // Forzamos el Play al cargar
+                
                 let mediaInfo = new cast.framework.messages.MediaInformation();
                 mediaInfo.contentId = listaCanales[canalActual].url;
                 mediaInfo.streamType = cast.framework.messages.StreamType.LIVE;
@@ -93,17 +111,18 @@
                 mediaInfo.metadata.title = listaCanales[canalActual].nombre;
                 
                 request.media = mediaInfo;
-                playerManager.load(request);
+                
+                playerManager.load(request).then(() => {
+                    playerManager.play(); 
+                }).catch(err => console.log('Error:', err));
                 
                 reiniciarTemporizador();
             }
-            
-            // Se eliminó por completo el botón 'Enter' para pausar el canal. 
-            // Ahora la TV se reproduce siempre.
         });
 
+        // Evita que HLS pause transmisiones en vivo por defecto
         const playbackConfig = new cast.framework.PlaybackConfig();
-        playbackConfig.autoResumeDuration = 5;
+        playbackConfig.autoPauseDuration = 0; 
         context.start({playbackConfig: playbackConfig});
     </script>
 </body>
