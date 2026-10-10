@@ -98,7 +98,11 @@
                 mediaInfo.metadata.title = listaCanales[canalActual].nombre;
                 
                 request.media = mediaInfo;
-                playerManager.load(request);
+                
+                // Forzamos explícitamente el Play en cuanto la TV termine de cargar la señal
+                playerManager.load(request).then(() => {
+                    playerManager.play();
+                }).catch((e) => console.log('Error cargando canal:', e));
                 
                 reiniciarTemporizador();
             }
