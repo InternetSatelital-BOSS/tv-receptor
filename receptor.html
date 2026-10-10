@@ -78,8 +78,7 @@
                 }
                 return; // Bloquea los demás botones mientras esté el aviso
             }
-
-            // 2. Cambiar de canal con flechas Arriba / Abajo
+                // 2. Cambiar de canal con flechas Arriba / Abajo
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 if (e.key === 'ArrowUp') {
                     canalActual = (canalActual + 1 >= listaCanales.length) ? 0 : canalActual + 1;
@@ -89,6 +88,8 @@
                 
                 // Cargar el nuevo canal en el reproductor de la TV
                 let request = new cast.framework.messages.LoadRequestData();
+                request.autoplay = true; // <--- ESTA ES LA LÍNEA MÁGICA PARA EL AUTOPLAY
+                
                 let mediaInfo = new cast.framework.messages.MediaInformation();
                 mediaInfo.contentId = listaCanales[canalActual].url;
                 mediaInfo.streamType = cast.framework.messages.StreamType.LIVE;
