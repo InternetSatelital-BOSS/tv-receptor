@@ -3,20 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <title>Boss TV Receiver</title>
-    <!-- SDK de Google Cast -->
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
     <style>
         body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
         
         cast-media-player { width: 100vw; height: 100vh; --splash-image: url('logo.png'); }
-
-        /* EL ESCUDO MÁGICO: Atrapa los clics antes de que lleguen al reproductor de Google */
-        #trampa-controles {
-            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-            z-index: 900; outline: none; background: transparent; cursor: default;
-        }
-
-        /* Aviso de Inactividad */
+        
         #overlay-inactividad {
             display: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
             background: rgba(0,0,0,0.95); color: white; justify-content: center; align-items: center;
@@ -29,9 +21,6 @@
 <body>
     
     <cast-media-player></cast-media-player>
-    
-    <!-- Esta es la capa que robará todos los botones del control físico -->
-    <div id="trampa-controles" tabindex="0"></div>
     
     <div id="overlay-inactividad">
         <div class="mensaje">¿Sigues viendo la TV?<br>Presiona "OK" en tu control remoto para continuar.</div>
@@ -49,29 +38,19 @@
         ];
         let canalActual = 0;
 
-        const trampa = document.getElementById('trampa-controles');
-        const overlay = document.getElementById('overlay-inactividad');
-
-        // 1. OBLIGAR A LA TV BOX A MIRAR LA TRAMPA (Reafirmamos el foco cada medio segundo)
-        setInterval(() => {
-            if (document.activeElement !== trampa) {
-                trampa.focus();
-            }
-        }, 500);
-        trampa.focus();
-
-        // 2. LÓGICA DE INACTIVIDAD (Pruebas Rápidas: 30s + 15s)
+        // --- LÓGICA DE INACTIVIDAD (Pruebas: 30s + 15s) ---
         let timeoutInactividad;
         let timeoutApagado;
+        const overlay = document.getElementById('overlay-inactividad');
         
         function reiniciarTemporizador() {
             clearTimeout(timeoutInactividad);
             clearTimeout(timeoutApagado);
             overlay.style.display = 'none';
-            trampa.focus(); // Regresamos el foco al cristal
             
             timeoutInactividad = setTimeout(() => {
                 overlay.style.display = 'flex'; 
+                
                 timeoutApagado = setTimeout(() => {
                     window.close(); 
                 }, 15000); 
@@ -80,15 +59,30 @@
 
         reiniciarTemporizador(); 
 
-        // 3. ESCUCHAR LOS BOTONES *EXCLUSIVAMENTE* DESDE EL CRISTAL INVISIBLE
-        trampa.addEventListener('keydown', function(e) {
+        // --- EL HACK DEL VIDEO NATIVO ---
+        // Le inyectamos eventos directamente a la etiqueta <video> de HTML5 para puentear a Google
+        function forzarVideoNativo() {
+            const videoCrudo = playerManager.getMediaElement();
+            if (videoCrudo) {
+                videoCrudo.autoplay = true;
+                if (videoCrudo.paused) {
+                    videoCrudo.play().catch(e => console.log('Hack de video falló:', e));
+                }
+            }
+        }
+
+        // --- CONTROL REMOTO FÍSICO ---
+        window.addEventListener('keydown', function(e) {
             
-            e.preventDefault(); 
-            e.stopPropagation();
+            // Bloqueo estricto del sistema de la TV
+            if (['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
+                e.preventDefault(); 
+            }
 
             if (overlay.style.display === 'flex') {
                 if (e.key === 'Enter') { 
                     reiniciarTemporizador();
+                    forzarVideoNativo();
                 }
                 return; 
             }
@@ -112,14 +106,18 @@
                 
                 request.media = mediaInfo;
                 
-                // Hacemos la carga. Para el reproductor, esta orden llegó "de la nada" (como el celular)
-                playerManager.load(request);
+                // Cargamos y aplicamos el hack inmediatamente después
+                playerManager.load(request).then(() => {
+                    forzarVideoNativo(); // Orden directa a HTML5
+                    
+                    // Un segundo disparo por si la TV Box es lenta procesando
+                    setTimeout(forzarVideoNativo, 300);
+                });
                 
                 reiniciarTemporizador();
             }
         });
 
-        // Apagar configuración por defecto
         const playbackConfig = new cast.framework.PlaybackConfig();
         playbackConfig.autoPauseDuration = 0; 
         context.start({playbackConfig: playbackConfig});
