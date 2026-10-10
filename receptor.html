@@ -39,7 +39,7 @@
         ];
         let canalActual = 0;
 
-        // --- LÓGICA DE INACTIVIDAD (¿Sigues ahí?) ---
+        // --- LÓGICA DE INACTIVIDAD (Para pruebas) ---
         let timeoutInactividad;
         let timeoutApagado;
         const overlay = document.getElementById('overlay-inactividad');
@@ -49,30 +49,34 @@
             clearTimeout(timeoutApagado);
             overlay.style.display = 'none';
             
-            // 10800000 = 3 horas.
+            // 30000 ms = 30 segundos para que aparezca el aviso
             timeoutInactividad = setTimeout(() => {
                 overlay.style.display = 'flex'; 
-                playerManager.pause(); 
                 
+                // NOTA: Ya no enviamos orden de pausa aquí, la TV seguirá reproduciendo de fondo
+                
+                // 15000 ms = 15 segundos de tolerancia para presionar OK
                 timeoutApagado = setTimeout(() => {
                     window.close(); 
-                }, 60000); 
-            }, 10800000); 
+                }, 15000); 
+            }, 30000); 
         }
 
-        reiniciarTemporizador(); 
+        reiniciarTemporizador();
 
-        // --- LÓGICA DEL CONTROL REMOTO DE LA TV BOX ---
+        // --- LÓGICA DEL CONTROL REMOTO FÍSICO ---
         window.addEventListener('keydown', function(e) {
             
+            // 1. Si el aviso está en pantalla, el botón OK (Enter) lo quita y reinicia el reloj
             if (overlay.style.display === 'flex') {
                 if (e.key === 'Enter') { 
                     reiniciarTemporizador();
-                    playerManager.play(); 
+                    playerManager.play(); // Aseguramos que siga fluido
                 }
                 return; 
             }
 
+            // 2. Cambiar de canal con flechas Arriba / Abajo
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 if (e.key === 'ArrowUp') {
                     canalActual = (canalActual + 1 >= listaCanales.length) ? 0 : canalActual + 1;
@@ -89,32 +93,15 @@
                 mediaInfo.metadata.title = listaCanales[canalActual].nombre;
                 
                 request.media = mediaInfo;
-                
-                // --- DOBLE VALIDACIÓN DE PLAY ---
-                playerManager.load(request).then(() => {
-                    // Play #1: Inmediatamente después de cargar
-                    playerManager.play();
-                    
-                    // Play #2: Medio segundo después por si el buffer o la TV lo pausan
-                    setTimeout(() => {
-                        playerManager.play();
-                    }, 500);
-                }).catch(err => console.log('Error cargando canal:', err));
+                playerManager.load(request);
                 
                 reiniciarTemporizador();
             }
             
-            else if (e.key === 'Enter') {
-                if (playerManager.getPlayerState() === cast.framework.messages.PlayerState.PLAYING) {
-                    playerManager.pause();
-                } else {
-                    playerManager.play();
-                }
-                reiniciarTemporizador();
-            }
+            // Se eliminó por completo el botón 'Enter' para pausar el canal. 
+            // Ahora la TV se reproduce siempre.
         });
 
-        // Configuración para transmisiones en vivo
         const playbackConfig = new cast.framework.PlaybackConfig();
         playbackConfig.autoResumeDuration = 5;
         context.start({playbackConfig: playbackConfig});
